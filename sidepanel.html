@@ -12,20 +12,25 @@
     <label for="guion">Pega aquí tu guion completo</label>
     <textarea id="guion" rows="8" placeholder="ESCENA 1&#10;BÚSQUEDA DE IMAGEN: &quot;atardecer en la playa&quot;&#10;..."></textarea>
 
-    <label for="carpeta">Nombre carpeta destino</label>
-    <input type="text" id="carpeta" placeholder="guion_1" value="pinterest_descargas">
+    <label for="carpeta">Nombre de la subcarpeta en Descargas (ej: pinterest_escenas)</label>
+    <input type="text" id="carpeta" placeholder="pinterest_escenas" value="pinterest_descargas">
+    <small style="color: #888; font-size: 11px;">
+      Se guardará en: Descargas/<span id="preview_carpeta">pinterest_descargas</span>/
+    </small>
 
-    <button id="btnIniciar" class="btn-iniciar">🚀 COMENZAR</button>
+    <div class="fila-botones">
+      <button id="btnIniciar" class="btn-iniciar">🚀 COMENZAR</button>
+      <button id="btn_cancelar" class="btn-cancelar" style="display: none;" disabled>⏹ Cancelar</button>
+    </div>
 
     <div class="progreso" id="progreso">
       <div class="barra"><div class="barra-relleno" id="barraRelleno"></div></div>
       <div class="texto-progreso" id="textoProgreso">Escena 0/0</div>
     </div>
 
-    <button id="btnDetener" class="btn-detener" hidden>⏹ Detener</button>
-
     <div id="log" class="log"></div>
   </div>
+  <script src="jszip.min.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

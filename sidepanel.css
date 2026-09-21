@@ -64,40 +64,36 @@ input:focus {
   border-color: #10a37f;
 }
 
-.btn-iniciar {
-  background: #10a37f;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  padding: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
+.fila-botones {
+  display: flex;
+  gap: 8px;
   margin-top: 6px;
 }
 
-.btn-iniciar:hover {
-  background: #0d8a6b;
+.fila-botones .btn-iniciar {
+  flex: 1;
+  margin-top: 0;
 }
 
-.btn-iniciar:disabled {
-  background: #444;
-  cursor: not-allowed;
-}
-
-.btn-detener {
+.btn-cancelar {
+  flex: 1;
   background: #d64545;
   color: #fff;
   border: none;
   border-radius: 8px;
-  padding: 8px;
+  padding: 10px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
 
-.btn-detener:hover {
+.btn-cancelar:hover {
   background: #b33636;
+}
+
+.btn-cancelar:disabled {
+  background: #444;
+  cursor: not-allowed;
 }
 
 .progreso {

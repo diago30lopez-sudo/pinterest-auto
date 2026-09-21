@@ -1,7 +1,9 @@
 // ============================================================
-// BACKGROUND.JS - v4
+// BACKGROUND.JS - v5
 // Fetch directo a Pinterest + selección heurística (sin IA)
 // ============================================================
+
+importScripts(chrome.runtime.getURL("jszip.min.js"));
 
 const PAUSA_ENTRE_ESCENAS_MS = 1500;
 const MAX_CANDIDATAS = 25;
@@ -36,8 +38,8 @@ async function processAllScenes(escenas, carpeta) {
 
   for (let i = 0; i < escenas.length; i++) {
     if (detenerSolicitado) {
-      enviarLog(`Detenido en escena ${i + 1}.`, "warn");
-      return;
+      enviarLog("Cancelado por el usuario.", "warn");
+      break;
     }
 
     const escena = escenas[i];
@@ -54,10 +56,20 @@ async function processAllScenes(escenas, carpeta) {
       }
 
       enviarLog(`Candidatas extraídas: ${candidatas.length}`, "info");
-      const indice = elegirMejor(escena.busqueda, candidatas);
-      const exito = await descargarGanadora(candidatas[indice], escena, carpeta);
+      const { indice, hash } = await elegirMejorSinDuplicados(escena.busqueda, candidatas);
+
+      if (indice === -1) {
+        enviarLog(`⚠️ Todas las candidatas de la escena ${escena.numero} ya fueron usadas en escenas anteriores. Se omite.`, "warn");
+        continue;
+      }
+
+      const exito = await descargarGanadoraConHash(candidatas[indice], escena, carpeta, hash);
       if (exito) descargadas++;
     } catch (error) {
+      if (error && error.message === "Cancelado por el usuario.") {
+        enviarLog("Cancelado por el usuario.", "warn");
+        break;
+      }
       enviarLog(`Error en escena ${escena.numero}: ${error.message}`, "error");
     }
 
@@ -67,22 +79,34 @@ async function processAllScenes(escenas, carpeta) {
   }
 
   enviarLog(`Proceso completado: ${descargadas}/${total} imágenes.`, "info");
+
+  if (descargadas > 0) {
+    await empaquetarEnZip(escenas, carpeta);
+  }
 }
 
 // ========== PINTEREST ==========
 
 async function buscarImagenesPinterest(query) {
+  if (detenerSolicitado) throw new Error("Cancelado por el usuario.");
+
   try {
     const candidatas = await fetchPinterestApi(query);
+    if (detenerSolicitado) throw new Error("Cancelado por el usuario.");
     if (candidatas.length > 0) return candidatas;
   } catch (e) {
+    if (e && e.message === "Cancelado por el usuario.") throw e;
     enviarLog(`API Pinterest falló (${e.message}). Probando SSR...`, "warn");
   }
 
+  if (detenerSolicitado) throw new Error("Cancelado por el usuario.");
+
   try {
     const candidatas = await fetchPinterestSSR(query);
+    if (detenerSolicitado) throw new Error("Cancelado por el usuario.");
     if (candidatas.length > 0) return candidatas;
   } catch (e) {
+    if (e && e.message === "Cancelado por el usuario.") throw e;
     enviarLog(`Fallback SSR falló: ${e.message}`, "error");
   }
 
@@ -207,32 +231,20 @@ function procesarResultadosPinterest(results) {
 
 // ========== DESCARGA con cadena de fallbacks ==========
 
-async function descargarGanadora(ganadora, escena, carpeta) {
+async function descargarGanadoraConHash(ganadora, escena, carpeta, hash) {
   if (!ganadora || !ganadora.fullChain || ganadora.fullChain.length === 0) {
     throw new Error("Imagen ganadora no disponible.");
   }
 
-  let hash = null;
-  try {
-    hash = await calcularDHash(ganadora.thumb);
-  } catch (e) {
-    enviarLog(`No se pudo calcular hash: ${e.message}`, "warn");
-  }
-
-  if (hash) {
-    const duplicada = await esDuplicado(hash);
-    if (duplicada) {
-      enviarLog(`⚠️ Duplicada detectada. Se omite la escena.`, "warn");
-      return false;
-    }
-  }
-
-  const nombreLimpio = `Escena_${escena.numero}_${escena.busqueda}`
+  const numeroStr = String(escena.numero).padStart(3, "0");
+  const nombreLimpio = `${numeroStr}_${escena.busqueda}`
     .replace(/[\\/:*?"<>|]/g, "_").trim().slice(0, 60) || "escena";
 
   let ultimoError = null;
 
   for (let i = 0; i < ganadora.fullChain.length; i++) {
+    if (detenerSolicitado) throw new Error("Cancelado por el usuario.");
+
     try {
       await chrome.downloads.download({
         url: ganadora.fullChain[i],
@@ -249,6 +261,48 @@ async function descargarGanadora(ganadora, escena, carpeta) {
   }
 
   throw ultimoError || new Error("Todas las variantes fallaron.");
+}
+
+async function empaquetarEnZip(escenas, carpeta) {
+  enviarLog("📦 Empaquetando imágenes en ZIP...", "info");
+  try {
+    const zip = new JSZip();
+    const nombreZip = `${carpeta}.zip`;
+
+    for (const escena of escenas) {
+      const numeroStr = String(escena.numero).padStart(3, "0");
+      const nombreArchivo = `${numeroStr}_${escena.busqueda}`
+        .replace(/[\\/:*?"<>|]/g, "_").trim().slice(0, 60);
+
+      const busqueda = await chrome.downloads.search({
+        filenameRegex: nombreArchivo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ".*\\.jpg$",
+        limit: 5
+      });
+
+      if (busqueda.length > 0) {
+        const archivo = busqueda[0];
+        const url = "file://" + archivo.filename.replace(/\\/g, "/");
+        try {
+          const resp = await fetch(url);
+          const blob = await resp.blob();
+          zip.file(`${numeroStr}_${escena.busqueda}.jpg`, blob);
+        } catch (e) {
+          enviarLog(`No se pudo leer ${nombreArchivo}: ${e.message}`, "warn");
+        }
+      }
+    }
+
+    const blobZip = await zip.generateAsync({ type: "blob" });
+    const urlBlob = URL.createObjectURL(blobZip);
+    await chrome.downloads.download({
+      url: urlBlob,
+      filename: nombreZip,
+      saveAs: false
+    });
+    enviarLog(`✅ ZIP generado: ${nombreZip}`, "info");
+  } catch (error) {
+    enviarLog(`Error generando ZIP: ${error.message}`, "error");
+  }
 }
 
 // ========== UTILIDADES ==========
@@ -746,6 +800,32 @@ function elegirMejor(busqueda, candidatas) {
   }
 
   return mejorIndice;
+}
+
+async function elegirMejorSinDuplicados(busqueda, candidatas) {
+  if (!Array.isArray(candidatas) || candidatas.length === 0) return { indice: -1, hash: null };
+
+  const conScore = candidatas.map((c, i) => ({
+    indice: i,
+    score: puntuarCandidata(busqueda, { ...c, _searchIndex: i })
+  }));
+  conScore.sort((a, b) => b.score - a.score);
+
+  for (const { indice } of conScore) {
+    if (detenerSolicitado) throw new Error("Cancelado por el usuario.");
+    try {
+      const hash = await calcularDHash(candidatas[indice].thumb);
+      const duplicada = await esDuplicado(hash);
+      if (!duplicada) {
+        return { indice, hash };
+      }
+    } catch (e) {
+      if (e && e.message === "Cancelado por el usuario.") throw e;
+      return { indice, hash: null };
+    }
+  }
+
+  return { indice: -1, hash: null };
 }
 
 // ============================================================

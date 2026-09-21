@@ -4,7 +4,8 @@
 const guionTextarea = document.getElementById("guion");
 const carpetaInput = document.getElementById("carpeta");
 const btnIniciar = document.getElementById("btnIniciar");
-const btnDetener = document.getElementById("btnDetener");
+const btnCancelar = document.getElementById("btn_cancelar");
+const previewCarpeta = document.getElementById("preview_carpeta");
 const logDiv = document.getElementById("log");
 const progresoDiv = document.getElementById("progreso");
 const barraRelleno = document.getElementById("barraRelleno");
@@ -34,10 +35,25 @@ function actualizarProgreso(actual, total) {
   barraRelleno.style.width = porcentaje + "%";
 }
 
+// Actualiza el preview de la subcarpeta en vivo mientras el usuario escribe
+function actualizarPreviewCarpeta() {
+  const valor = sanearCarpeta(carpetaInput.value) || "pinterest_descargas";
+  previewCarpeta.textContent = valor;
+}
+
+function sanearCarpeta(valor) {
+  return String(valor ?? "")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .trim()
+    .slice(0, 60);
+}
+
+carpetaInput.addEventListener("input", actualizarPreviewCarpeta);
+
 // Al pulsar COMENZAR se valida el guion y se envían las escenas al background
 btnIniciar.addEventListener("click", async () => {
   const guion = guionTextarea.value.trim();
-  const carpeta = carpetaInput.value.trim() || "pinterest_descargas";
+  const carpeta = sanearCarpeta(carpetaInput.value) || "pinterest_descargas";
 
   // Validación mínima antes de arrancar
   if (!guion) {
@@ -65,7 +81,8 @@ btnIniciar.addEventListener("click", async () => {
 
   ejecutando = true;
   btnIniciar.disabled = true;
-  btnDetener.hidden = false;
+  btnCancelar.disabled = false;
+  btnCancelar.style.display = "block";
   logDiv.innerHTML = ""; // limpia logs anteriores
   actualizarProgreso(0, escenas.length);
 
@@ -78,8 +95,10 @@ btnIniciar.addEventListener("click", async () => {
   }
 });
 
-// Al pulsar DETENER se avisa al background para cortar el bucle
-btnDetener.addEventListener("click", async () => {
+// Al pulsar Cancelar se avisa al background para cortar el proceso
+btnCancelar.addEventListener("click", async () => {
+  btnCancelar.disabled = true;
+  agregarLog("Cancelación solicitada...", "warn");
   try {
     await chrome.runtime.sendMessage({ tipo: "detener" });
   } catch (error) {
@@ -114,7 +133,8 @@ chrome.runtime.onMessage.addListener((mensaje) => {
 function estadoDetenido() {
   ejecutando = false;
   btnIniciar.disabled = false;
-  btnDetener.hidden = true;
+  btnCancelar.disabled = true;
+  btnCancelar.style.display = "none";
 }
 
 // Conexión persistente con el background para detectar cierre del panel
