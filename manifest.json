@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Pinterest Auto-Descargador IA",
+  "version": "3.0",
+  "description": "Busca y descarga imágenes de Pinterest eligiendo la mejor coincidencia por heurística.",
+  "permissions": ["storage", "downloads", "sidePanel", "unlimitedStorage"],
+  "host_permissions": [
+    "https://*.pinterest.com/*",
+    "https://*.pinimg.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Pinterest Auto-Descargador"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "icons": {
+    "128": "icon.png"
+  }
+}

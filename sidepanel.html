@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Pinterest Auto-Descargador IA</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🖼️ Pinterest Auto-Descargador IA</h1>
+
+    <label for="guion">Pega aquí tu guion completo</label>
+    <textarea id="guion" rows="8" placeholder="ESCENA 1&#10;BÚSQUEDA DE IMAGEN: &quot;atardecer en la playa&quot;&#10;..."></textarea>
+
+    <label for="carpeta">Nombre carpeta destino</label>
+    <input type="text" id="carpeta" placeholder="guion_1" value="pinterest_descargas">
+
+    <button id="btnIniciar" class="btn-iniciar">🚀 COMENZAR</button>
+
+    <div class="progreso" id="progreso">
+      <div class="barra"><div class="barra-relleno" id="barraRelleno"></div></div>
+      <div class="texto-progreso" id="textoProgreso">Escena 0/0</div>
+    </div>
+
+    <button id="btnDetener" class="btn-detener" hidden>⏹ Detener</button>
+
+    <div id="log" class="log"></div>
+  </div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
