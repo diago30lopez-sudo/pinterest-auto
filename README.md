@@ -1,6 +1,6 @@
 # 🖼️ Pinterest Auto-Descargador IA
 
-Extensión de Chrome (Manifest V3) que busca imágenes en Pinterest y usa **Gemini 2.0 Flash** para elegir la mejor coincidencia de cada escena de un guion, descargando solo la imagen ganadora con el nombre de la escena. Se abre como **panel lateral** (side panel) al hacer clic en el icono.
+Extensión de Chrome (Manifest V3) que busca imágenes en Pinterest y usa un **motor heurístico avanzado** (fases + BM25-lite + cobertura de términos) para elegir la mejor coincidencia de cada escena de un guion, descargando solo la imagen ganadora con el nombre de la escena. Se abre como **panel lateral** (side panel) al hacer clic en el icono.
 
 ## 🔧 Qué hace
 
@@ -14,21 +14,29 @@ Extensión de Chrome (Manifest V3) que busca imágenes en Pinterest y usa **Gemi
    ...
    BÚSQUEDA DE IMAGEN: "atardecer en la playa"
    ```
-2. La extensión abre una búsqueda en Pinterest por cada escena y espera dinámicamente (MutationObserver, timeout 15 s) a que carguen las imágenes.
-3. Extrae las **primeras 8 imágenes candidatas** (ancho mínimo 512 px). Si en 15 s no hay al menos 4, la escena falla y se continúa.
-4. Envía las miniaturas a **Gemini 2.0 Flash**, que elige el índice que mejor coincide con la búsqueda.
-5. Descarga **solo la ganadora** en la carpeta indicada, con el nombre `Escena_N_<búsqueda>.jpg`.
+2. Por cada escena, el background pide hasta **25 candidatas** a Pinterest (API + fallback SSR).
+3. El panel lateral puntúa cada candidata con el motor heurístico (sujeto, palabras clave, formato/aspect ratio, planos, colores, año, resolución, popularidad, posición) y ordena por puntuación.
+4. Se descarga **solo la ganadora** con el nombre `001_<búsqueda>.jpg`, numerada 001, 002, 003…
+5. Un **dHash** descarta imágenes duplicadas entre escenas (historial en `chrome.storage.session`, limpiado al cerrar el panel).
+6. Al terminar, las imágenes de la tanda se empaquetan en un **ZIP**.
+
+## 📁 Carpeta de destino
+
+- Por defecto se guarda en **Descargas/pinterest_descargas/**.
+- Con el botón **"📁 Elegir carpeta de destino"** eliges una carpeta cualquiera mediante el File System Access API (`showDirectoryPicker`); el handle se persiste en **IndexedDB** para conservarla entre sesiones.
+- El botón **"Restablecer a Descargas"** vuelve al destino por defecto.
+- Si al guardar en la carpeta elegida ocurre un error, se hace **fallback automático a Descargas**.
 
 ## 📦 Archivos
 
 ```
 pinterest-auto/
 ├── manifest.json      # Configuración de la extensión (MV3)
-├── sidepanel.html     # Interfaz del panel lateral (ancho fluido)
+├── sidepanel.html     # Interfaz del panel lateral
 ├── sidepanel.css      # Estilos dark mode
-├── sidepanel.js       # Lógica del panel (parseo + comunicación)
-├── background.js      # El cerebro: pestañas, Gemini y descargas
-├── content.js         # Extracción de imágenes dentro de Pinterest
+├── sidepanel.js       # Bucle principal, heurístico y descarga local
+├── background.js      # Fetch de Pinterest + heurístico (obtenerCandidatas)
+├── jszip.min.js       # Generación del ZIP final
 └── icon.png           # Icono 128x128
 ```
 
@@ -38,28 +46,25 @@ pinterest-auto/
 2. Activa el **"Modo desarrollador"** (interruptor en la esquina superior derecha).
 3. Pulsa el botón **"Cargar descomprimida"**.
 4. Selecciona la carpeta **`pinterest-auto`** (la que contiene el `manifest.json`).
-5. Debería aparecer **"Pinterest Auto-Descargador IA"** en la lista.
-6. Fija el icono en tu barra de Chrome (clic en la pieza de puzzle → anclar).
-7. Haz clic en el icono 🖼️ y se abrirá el **panel lateral** con la aplicación.
+5. Fija el icono en tu barra de Chrome (clic en la pieza de puzzle → anclar).
+6. Haz clic en el icono 🖼️ y se abrirá el **panel lateral** con la aplicación.
 
 ## ▶️ Cómo usar
 
 1. **Pega** tu guion en el área de texto grande.
-2. Introduce tu **API Key de Gemini** (se guarda en el almacenamiento local de la extensión y no se vuelve a pedir).
-3. Escribe el **nombre de la carpeta destino** (se crea en tu carpeta de descargas).
-4. Pulsa **🚀 COMENZAR**.
-5. Observa el progreso en el log en vivo. Puedes pulsar **⏹ Detener** en cualquier momento.
-6. Las descargas empiezan en `Descargas/<carpeta>/Escena_N_<búsqueda>.jpg`.
+2. (Opcional) Pulsa **📁 Elegir carpeta de destino** para fijar una carpeta propia.
+3. Pulsa **🚀 COMENZAR**.
+4. Observa el progreso en el log en vivo. Puedes pulsar **⏹ Cancelar** en cualquier momento.
 
 ## 🧪 Consejos
 
 - Asegúrate de estar **con sesión iniciada en Pinterest** para mejores resultados.
-- Si una escena falla (sin candidatas o error de Gemini), se registra el error y **continúa con la siguiente**.
-- La espera de imágenes usa un **MutationObserver** con timeout de **15 s**; si no hay al menos 4 candidatas, la escena se omite.
+- Si una escena falla (sin candidatas), se registra el error y **continúa con la siguiente**.
 - La extensión espera **1,5 s** entre escenas para no saturar el sistema.
+- Las imágenes duplicadas entre escenas se saltan automáticamente.
 
 ## ✅ Requisitos
 
 - Chrome / Chromium (funciona con Edge, Brave, Opera, etc.).
-- Una API Key gratuita de [Google AI Studio](https://aistudio.google.com/apikey).
-- **No** usa frameworks ni librerías externas: todo es JavaScript nativo con las APIs de Chrome.
+- Permisos declarados en el manifest: `downloads`, `storage`, `sidePanel`, `unlimitedStorage`.
+- **No** usa frameworks ni librerías externas: todo es JavaScript nativo con las APIs de Chrome (JSZip solo para el empaquetado final).

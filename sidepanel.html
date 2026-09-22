@@ -9,17 +9,23 @@
   <div class="container">
     <h1>🖼️ Pinterest Auto-Descargador IA</h1>
 
-    <label for="guion">Pega aquí tu guion completo</label>
-    <textarea id="guion" rows="8" placeholder="ESCENA 1&#10;BÚSQUEDA DE IMAGEN: &quot;atardecer en la playa&quot;&#10;..."></textarea>
+    <label for="input_guion">Pega aquí tu guion completo</label>
+    <textarea id="input_guion" rows="8" placeholder="ESCENA 1&#10;BÚSQUEDA DE IMAGEN: &quot;atardecer en la playa&quot;&#10;..."></textarea>
 
-    <label for="carpeta">Nombre de la subcarpeta en Descargas (ej: pinterest_escenas)</label>
-    <input type="text" id="carpeta" placeholder="pinterest_escenas" value="pinterest_descargas">
-    <small style="color: #888; font-size: 11px;">
-      Se guardará en: Descargas/<span id="preview_carpeta">pinterest_descargas</span>/
-    </small>
+    <div style="margin: 10px 0;">
+      <button id="btn_elegir_carpeta" type="button" style="width: 100%; padding: 8px; margin-bottom: 6px;">
+        📁 Elegir carpeta de destino
+      </button>
+      <div style="font-size: 11px; color: #888;">
+        Guardando en: <span id="ruta_carpeta_seleccionada">Descargas/pinterest_descargas/</span>
+      </div>
+      <button id="btn_limpiar_carpeta" type="button" style="font-size: 11px; padding: 4px 8px; margin-top: 4px;">
+        Restablecer a Descargas
+      </button>
+    </div>
 
     <div class="fila-botones">
-      <button id="btnIniciar" class="btn-iniciar">🚀 COMENZAR</button>
+      <button id="btn_comenzar" class="btn-iniciar">🚀 COMENZAR</button>
       <button id="btn_cancelar" class="btn-cancelar" style="display: none;" disabled>⏹ Cancelar</button>
     </div>
 
