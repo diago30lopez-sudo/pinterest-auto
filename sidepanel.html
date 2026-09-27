@@ -9,6 +9,15 @@
   <div class="container">
     <h1>🖼️ Pinterest Auto-Descargador IA</h1>
 
+    <div style="margin-bottom: 8px; display: flex; gap: 8px; align-items: center;">
+      <label for="archivo_guion" style="cursor: pointer; padding: 6px 12px; background: #3b82f6; color: #fff; border-radius: 6px; font-size: 12px;">
+        📁 Cargar guion desde archivo .txt
+      </label>
+      <input id="archivo_guion" type="file" accept=".txt,.md,text/plain" style="display: none;">
+      <span id="nombre_archivo" style="font-size: 11px; color: #888; flex: 1;"></span>
+      <button id="limpiar_guion" type="button" style="font-size: 11px; padding: 4px 8px;">Limpiar</button>
+    </div>
+
     <label for="input_guion">Pega aquí tu guion completo</label>
     <textarea id="input_guion" rows="8" placeholder="ESCENA 1&#10;BÚSQUEDA DE IMAGEN: &quot;atardecer en la playa&quot;&#10;..."></textarea>
 
@@ -33,6 +42,57 @@
       <div class="barra"><div class="barra-relleno" id="barraRelleno"></div></div>
       <div class="texto-progreso" id="textoProgreso">Escena 0/0</div>
     </div>
+
+    <div style="margin: 6px 0; font-size: 11px; color: #888; display: flex; align-items: center; gap: 8px;">
+      <label for="input_limite_revision">Máx. escenas para revisión manual:</label>
+      <input id="input_limite_revision" type="number" min="5" max="200" step="5" value="50"
+             style="width: 70px; padding: 4px; background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 4px;">
+      <span>Las que excedan se resuelven automáticamente.</span>
+    </div>
+
+    <button id="btn_revisar" type="button" style="display: none; width: 100%; padding: 10px; margin: 10px 0; background: #ff8c00; color: #fff; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">
+      🖐️ Revisar escenas dudosas (<span id="contador_revision">0</span>)
+    </button>
+
+    <div id="vista_revision" style="display: none; border: 2px solid #ff8c00; border-radius: 8px; padding: 10px; margin: 10px 0;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <strong style="font-size: 12px;">Revisión manual</strong>
+        <span id="revision_progreso" style="font-size: 12px; color: #ff8c00; font-weight: bold;">0/0</span>
+        <button id="cerrar_revision" type="button" style="padding: 3px 8px; font-size: 11px;">✕ Cerrar</button>
+      </div>
+      <div id="revision_busqueda" style="font-size: 12px; margin-bottom: 8px; color: #ccc;"></div>
+      <div id="revision_imagenes" style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;"></div>
+      <div id="revision_acciones" style="display: flex; gap: 6px; margin-top: 10px;">
+        <button id="revision_refrescar" type="button" style="flex: 1; padding: 8px; font-size: 12px;">🔄 Más opciones</button>
+        <button id="revision_saltar" type="button" style="flex: 1; padding: 8px; font-size: 12px;">⏭️ Saltar esta</button>
+      </div>
+      <div style="font-size: 10px; color: #888; margin-top: 6px;">
+        Haz clic en una imagen para elegirla. Lo elegido se descarga al terminar la revisión.
+      </div>
+    </div>
+
+    <details style="margin: 10px 0; padding: 8px; border: 1px solid #333; border-radius: 6px;">
+      <summary style="cursor: pointer; font-weight: bold;">🧠 Verificación Visual con IA (opcional)</summary>
+      <div style="margin-top: 10px;">
+        <label style="display: block; margin-bottom: 4px; font-size: 12px;">URL de FreeLLMAPI:</label>
+        <input id="freellm_url" type="text" value="http://localhost:3001/v1" style="width: 100%; padding: 6px; margin-bottom: 8px;">
+        <label style="display: block; margin-bottom: 4px; font-size: 12px;">API Key (opcional):</label>
+        <input id="freellm_key" type="password" style="width: 100%; padding: 6px; margin-bottom: 8px;">
+        <label style="display: block; margin-bottom: 4px; font-size: 12px;">Modelo:</label>
+        <input id="freellm_model" type="text" value="minicpm-v-4.6" style="width: 100%; padding: 6px; margin-bottom: 8px;">
+        <button id="btn_probar_freellm" type="button" style="padding: 6px 12px; margin-bottom: 8px;">Probar conexión</button>
+        <select id="freellm_modelos" style="width: 100%; padding: 6px; margin-bottom: 8px; display: none;"></select>
+        <div id="freellm_status" style="font-size: 11px; color: #888; margin-bottom: 8px;"></div>
+        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; margin-bottom: 6px;">
+          <input id="usar_vision_ia" type="checkbox">
+          <span style="font-size: 12px;">Usar verificación visual con IA (siempre activo)</span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+          <input id="modo_rapido" type="checkbox">
+          <span style="font-size: 11px; color: #888;">Modo rápido (sin IA)</span>
+        </label>
+      </div>
+    </details>
 
     <div id="log" class="log"></div>
   </div>

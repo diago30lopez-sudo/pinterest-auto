@@ -6,7 +6,9 @@
   "permissions": ["storage", "downloads", "sidePanel", "unlimitedStorage"],
   "host_permissions": [
     "https://*.pinterest.com/*",
-    "https://*.pinimg.com/*"
+    "https://*.pinimg.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "background": {
     "service_worker": "background.js"
