@@ -21,6 +21,51 @@ function log(mensaje, tipo = "info") {
   logDiv.scrollTop = logDiv.scrollHeight; // autoscroll
 }
 
+// ============================================================
+// HELPER SEGURO DE LISTENERS
+// Registra un listener solo si el elemento existe. Si no existe,
+// avisa por consola y sigue ejecutando el resto del script.
+// ESTO ES CRÍTICO: sin esto, un solo getElementById(...).addEventListener
+// sobre un ID inexistente detiene TODO el script.
+// ============================================================
+function on(id, evento, handler) {
+  const el = document.getElementById(id);
+  if (!el) {
+    console.warn(`[sidepanel.js] ⚠️ Elemento #${id} no encontrado. Listener "${evento}" NO registrado.`);
+    return false;
+  }
+  el.addEventListener(evento, handler);
+  return true;
+}
+
+// Al final de la carga, reporta qué IDs faltan (para diagnóstico)
+window.__verificarElementos = () => {
+  const idsRequeridos = [
+    "log", "progreso", "barraRelleno", "textoProgreso",
+    "archivo_guion", "nombre_archivo", "limpiar_guion", "input_guion",
+    "btn_elegir_carpeta", "btn_limpiar_carpeta", "ruta_carpeta_seleccionada",
+    "btn_comenzar", "btn_cancelar",
+    "input_limite_revision",
+    "btn_revisar", "contador_revision",
+    "vista_revision", "revision_progreso", "revision_busqueda", "revision_imagenes",
+    "revision_acciones", "revision_refrescar", "revision_saltar", "cerrar_revision",
+    "btn_sospechosas", "contador_sospechosas",
+    "vista_sospechosas", "sospechosas_progreso", "sospechosas_busqueda",
+    "sospechosas_razon", "sospechosas_elegida", "sospechosas_alternativas",
+    "sospechosas_acciones", "sospechosas_usar", "sospechosas_saltar",
+    "cerrar_sospechosas",
+    "modal_completado", "modal_icono", "modal_titulo", "modal_mensaje", "modal_cerrar",
+    "input_escena_numero", "btn_buscar_escena", "busqueda_manual_container"
+  ];
+  const faltantes = idsRequeridos.filter(id => !document.getElementById(id));
+  if (faltantes.length) {
+    console.error("[sidepanel.js] ❌ IDs faltantes en HTML:", faltantes);
+    return faltantes;
+  }
+  console.log("[sidepanel.js] ✅ Todos los IDs requeridos están en el HTML.");
+  return [];
+};
+
 function actualizarProgreso(actual, total) {
   progresoDiv.classList.add("visible");
   textoProgreso.textContent = `Escena ${actual}/${total}`;
@@ -50,7 +95,7 @@ function parsearGuion(guion) {
 
 let carpetaElegidaHandle = null;
 
-document.getElementById("btn_elegir_carpeta").addEventListener("click", async () => {
+on("btn_elegir_carpeta", "click", async () => {
   try {
     const handle = await window.showDirectoryPicker({ mode: "readwrite" });
     carpetaElegidaHandle = handle;
@@ -63,7 +108,7 @@ document.getElementById("btn_elegir_carpeta").addEventListener("click", async ()
   }
 });
 
-document.getElementById("btn_limpiar_carpeta").addEventListener("click", async () => {
+on("btn_limpiar_carpeta", "click", async () => {
   carpetaElegidaHandle = null;
   document.getElementById("ruta_carpeta_seleccionada").textContent = "Descargas/pinterest_descargas/";
   await borrarHandleDeIDB();
@@ -931,7 +976,7 @@ Si NINGUNA cumple, responde exactamente: "NINGUNA".`;
 })();
 
 ["freellm_url", "freellm_key", "freellm_model"].forEach(id => {
-  document.getElementById(id).addEventListener("change", async (e) => {
+  on(id, "change", async (e) => {
     const map = {
       freellm_url: "freellmApiUrl",
       freellm_key: "freellmApiKey",
@@ -941,15 +986,15 @@ Si NINGUNA cumple, responde exactamente: "NINGUNA".`;
   });
 });
 
-document.getElementById("usar_vision_ia").addEventListener("change", async (e) => {
+on("usar_vision_ia", "change", async (e) => {
   await chrome.storage.local.set({ usarVisionIA: e.target.checked });
 });
 
-document.getElementById("modo_rapido").addEventListener("change", async (e) => {
+on("modo_rapido", "change", async (e) => {
   await chrome.storage.local.set({ modoRapido: e.target.checked });
 });
 
-document.getElementById("btn_probar_freellm").addEventListener("click", async () => {
+on("btn_probar_freellm", "click", async () => {
   const url = document.getElementById("freellm_url").value.replace(/\/$/, "");
   const key = document.getElementById("freellm_key").value;
   const status = document.getElementById("freellm_status");
@@ -986,7 +1031,7 @@ document.getElementById("btn_probar_freellm").addEventListener("click", async ()
   }
 });
 
-document.getElementById("freellm_modelos").addEventListener("change", async (e) => {
+on("freellm_modelos", "change", async (e) => {
   document.getElementById("freellm_model").value = e.target.value;
   await chrome.storage.local.set({ freellmModel: e.target.value });
 });
@@ -1294,6 +1339,60 @@ function mostrarBotonRevisar() {
   btn.style.display = "block";
 }
 
+// ============================================================
+// BÚSQUEDA MANUAL POR NÚMERO DE ESCENA
+// Reutiliza la vista de revisión para mostrar las candidatas.
+// ============================================================
+async function abrirVistaBusquedaManual(escena, candidatas) {
+  if (!candidatas || candidatas.length === 0) {
+    alert(`No se encontraron candidatas para la escena #${escena.numero}`);
+    return;
+  }
+  const top6Indices = elegirTop10(escena.busqueda, candidatas).slice(0, 6);
+  const top6 = top6Indices.map(i => candidatas[i]);
+  // Añadimos la escena a pendientes para revisión manual
+  estadoRevision.pendientes.push({
+    numero: escena.numero,
+    busqueda: escena.busqueda,
+    candidatas: top6,
+    cursor: 0,
+    score: 0
+  });
+  log(`🔍 Escena #${escena.numero} añadida a revisión manual (${top6.length} candidatas).`);
+  mostrarBotonRevisar();
+}
+
+on("btn_buscar_escena", "click", async () => {
+  const numero = parseInt(document.getElementById("input_escena_numero").value, 10);
+  if (!numero || numero < 1) {
+    alert("Ingresa un número de escena válido");
+    return;
+  }
+  const guion = document.getElementById("input_guion").value;
+  const escenas = parsearGuion(guion);
+  const escena = escenas.find(e => e.numero === numero);
+  if (!escena) {
+    alert(`No se encontró la escena #${numero} en el guion cargado`);
+    return;
+  }
+  log(`🔍 Buscando manualmente escena #${escena.numero}: "${escena.busqueda}"`, "info");
+  const candidatas = await buscarEnTodasLasFuentes(escena.busqueda);
+  if (candidatas.length === 0) {
+    const degradada = degradarBusqueda(escena.busqueda);
+    if (degradada && degradada !== escena.busqueda) {
+      log(`⚠️ Sin candidatas. Reintentando con búsqueda degradada: "${degradada}"...`);
+      const candidatasAlt = await buscarEnTodasLasFuentes(degradada);
+      if (candidatasAlt.length > 0) {
+        await abrirVistaBusquedaManual(escena, candidatasAlt);
+        return;
+      }
+    }
+    alert(`No se encontraron candidatas para la escena #${escena.numero}`);
+    return;
+  }
+  await abrirVistaBusquedaManual(escena, candidatas);
+});
+
 // Ruido que Pinterest no entiende y solo restringe la búsqueda
 const RUIDO_BUSQUEDA = new Set([
   "aprox", "aproximadamente", "min", "max", "seg", "minutos", "segundos",
@@ -1494,12 +1593,12 @@ function seleccionarVariante(candidata, indice) {
   abrirRevision();
 }
 
-document.getElementById("btn_revisar").addEventListener("click", () => {
+on("btn_revisar", "click", () => {
   estadoRevision.indiceActual = 0;
   abrirRevision();
 });
 
-document.getElementById("revision_refrescar").addEventListener("click", async () => {
+on("revision_refrescar", "click", async () => {
   const escena = estadoRevision.pendientes[estadoRevision.indiceActual];
   if (!escena) return;
   log(`🔄 Buscando más opciones para escena ${escena.numero}...`);
@@ -1516,7 +1615,7 @@ document.getElementById("revision_refrescar").addEventListener("click", async ()
   abrirRevision();
 });
 
-document.getElementById("revision_saltar").addEventListener("click", () => {
+on("revision_saltar", "click", () => {
   const escena = estadoRevision.pendientes[estadoRevision.indiceActual];
   if (escena) {
     log(`⏭️ Escena ${escena.numero} saltada por el usuario.`);
@@ -1530,7 +1629,7 @@ document.getElementById("revision_saltar").addEventListener("click", () => {
   abrirRevision();
 });
 
-document.getElementById("cerrar_revision").addEventListener("click", cerrarRevision);
+on("cerrar_revision", "click", cerrarRevision);
 
 function cerrarRevision() {
   document.getElementById("vista_revision").style.display = "none";
@@ -1542,7 +1641,17 @@ function cerrarRevision() {
 }
 
 async function descargarSeleccionesRevisadas() {
-  // Las descartadas se guardan como null y no deben intentar descargarse
+  // COBERTURA: rellenar selecciones faltantes con la primera candidata del
+  // pool de cada escena pendiente, para que NINGUNA quede sin descargar.
+  for (const pendiente of estadoRevision.pendientes) {
+    if (!estadoRevision.selecciones[pendiente.numero] && pendiente.candidatas && pendiente.candidatas.length > 0) {
+      const primera = pendiente.candidatas[0];
+      if (primera) {
+        estadoRevision.selecciones[pendiente.numero] = { candidata: primera, busqueda: pendiente.busqueda };
+        log(`ℹ️ Escena ${pendiente.numero}: sin selección manual, se usa la primera candidata del pool.`);
+      }
+    }
+  }
   const selecciones = Object.entries(estadoRevision.selecciones).filter(([, v]) => v);
   if (selecciones.length === 0) {
     if (estadoRevision.indiceActual >= estadoRevision.pendientes.length) {
@@ -1598,28 +1707,33 @@ async function descargarSeleccionesRevisadas() {
 }
 
 // ---------- MEJORA 3: cargar guion desde archivo .txt / .md ----------
-document.getElementById("archivo_guion").addEventListener("change", async (e) => {
-  const archivo = e.target.files && e.target.files[0];
-  if (!archivo) return;
-  if (!/\.(txt|md|markdown)$/i.test(archivo.name)) {
-    document.getElementById("nombre_archivo").textContent = "❌ solo .txt o .md";
-    log(`❌ Archivo no válido: ${archivo.name}. Se requiere .txt o .md.`, "error");
-    e.target.value = "";
-    return;
-  }
-  const texto = await archivo.text();
-  document.getElementById("input_guion").value = texto;
-  document.getElementById("nombre_archivo").textContent =
-    `✅ ${archivo.name} (${(archivo.size / 1024).toFixed(1)} KB)`;
-  const escenas = parsearGuion(texto);
-  if (escenas.length > 0) {
-    log(`📄 Guion cargado: ${escenas.length} escenas detectadas.`);
-  } else {
-    log(`⚠️ El archivo no tiene escenas con el formato esperado.`);
+on("archivo_guion", "change", async (e) => {
+  try {
+    const archivo = e.target.files && e.target.files[0];
+    if (!archivo) return;
+    if (!/\.(txt|md|markdown)$/i.test(archivo.name)) {
+      document.getElementById("nombre_archivo").textContent = "❌ solo .txt o .md";
+      log(`❌ Archivo no válido: ${archivo.name}. Se requiere .txt o .md.`, "error");
+      e.target.value = "";
+      return;
+    }
+    const texto = await archivo.text();
+    document.getElementById("input_guion").value = texto;
+    document.getElementById("nombre_archivo").textContent =
+      `✅ ${archivo.name} (${(archivo.size / 1024).toFixed(1)} KB)`;
+    const escenas = parsearGuion(texto);
+    if (escenas.length > 0) {
+      log(`📄 Guion cargado: ${escenas.length} escenas detectadas.`);
+    } else {
+      log(`⚠️ El archivo no tiene escenas con el formato esperado.`);
+    }
+  } catch (err) {
+    console.error("[archivo_guion] Error al cargar archivo:", err);
+    log(`❌ Error al cargar el archivo: ${err.message}`, "error");
   }
 });
 
-document.getElementById("limpiar_guion").addEventListener("click", () => {
+on("limpiar_guion", "click", () => {
   document.getElementById("input_guion").value = "";
   document.getElementById("nombre_archivo").textContent = "";
   document.getElementById("archivo_guion").value = "";
@@ -1643,6 +1757,12 @@ inputLimite.addEventListener("change", async () => {
   inputLimite.value = v;
   await chrome.storage.local.set({ [CLAVE_LIMITE_REVISION]: v });
   log(`⚙️ Límite de revisión manual: ${v} escenas.`);
+});
+// Persistir también al perder el foco (blur) además de change
+inputLimite.addEventListener("blur", async () => {
+  const v = limiteRevisionEfectivo();
+  inputLimite.value = v;
+  await chrome.storage.local.set({ [CLAVE_LIMITE_REVISION]: v });
 });
 cargarLimiteRevision().catch(() => {});
 
@@ -1681,10 +1801,12 @@ function verificarCobertura(escenas, momento) {
 
 let detenerSolicitado = false;
 
-document.getElementById("btn_comenzar").addEventListener("click", async () => {
-  const guion = document.getElementById("input_guion").value;
-  const escenas = parsearGuion(guion);
-  if (escenas.length === 0) { alert("No se encontraron escenas."); return; }
+on("btn_comenzar", "click", async () => {
+  try {
+    const guion = document.getElementById("input_guion").value;
+    const escenas = parsearGuion(guion);
+    if (escenas.length === 0) { alert("No se encontraron escenas."); return; }
+    await cargarLimiteRevision();
   detenerSolicitado = false;
   document.getElementById("btn_cancelar").style.display = "inline-block";
   document.getElementById("btn_comenzar").style.display = "none";
@@ -1806,21 +1928,30 @@ document.getElementById("btn_comenzar").addEventListener("click", async () => {
     }
     await new Promise(r => setTimeout(r, 1500));
   }
-  // Resolución de excedentes: las escenas sin candidatas tienen prioridad
-  // ABSOLUTA (fuera del tope). El resto se ordena por score: las peores pasan a
-  // revisión manual hasta el límite configurado y las demás se auto-resuelven.
+  // ============================================================
+  // LÍMITE REAL DE REVISIÓN MANUAL
+  // El tope del usuario es el TOTAL de escenas que esperan decisión manual.
+  // Las que excedan se resuelven AUTOMÁTICAMENTE descargando la mejor candidata.
+  // ============================================================
   const limite = limiteRevisionEfectivo();
   const sinCandidatas = estadoRevision.pendientes.filter(p => p.sinCandidatas);
   const normales = estadoRevision.pendientes.filter(p => !p.sinCandidatas);
   normales.sort((a, b) => a.score - b.score);
-  if (sinCandidatas.length) {
-    log(`🔎 ${sinCandidatas.length} escena(s) sin candidatas: prioridad de revisión, no cuentan para el límite de ${limite}.`);
-  }
-  if (normales.length > limite) {
-    const excedente = normales.splice(limite);
-    log(`⚠️ ${excedente.length} escenas dudosas exceden el límite de revisión (${limite}): se resuelven automáticamente.`);
-    for (const pendiente of excedente) {
-      const cand = pendiente.candidatas[0];
+  const totalEnRevision = estadoRevision.pendientes.length;
+  const excedenteTotal = Math.max(0, totalEnRevision - limite);
+  if (excedenteTotal > 0) {
+    log(`⚠️ ${totalEnRevision} escenas esperan revisión manual, pero el límite es ${limite}. Se auto-resolverán ${excedenteTotal}.`);
+    // Las normales con peor score van primero a auto-resolver
+    const excedenteNormales = normales.splice(0, Math.min(excedenteTotal, normales.length));
+    for (const pendiente of excedenteNormales) {
+      let cand = pendiente.candidatas[0];
+      if (!cand) {
+        const degradada = degradarBusqueda(pendiente.busqueda);
+        if (degradada) {
+          const extra = await buscarEnTodasLasFuentes(degradada);
+          if (extra.length > 0) cand = extra[0];
+        }
+      }
       if (!cand) {
         log(`❌ Escena ${pendiente.numero}: sin candidatas para resolver. Se registra en fallos.`);
         escenasFallidas.push(pendiente.numero);
@@ -1847,13 +1978,55 @@ document.getElementById("btn_comenzar").addEventListener("click", async () => {
       }
     }
   }
+  if (sinCandidatas.length) {
+    log(`🔎 ${sinCandidatas.length} escena(s) sin candidatas: prioridad de revisión, no cuentan para el límite de ${limite}.`);
+  }
   // Reordenar: primero las sin candidatas, luego el resto por score
   estadoRevision.pendientes = [...sinCandidatas, ...normales];
   if (estadoRevision.pendientes.length > 0) {
     mostrarBotonRevisar();
-    log(`🖐️ ${estadoRevision.pendientes.length} escenas esperan revisión manual al terminar.`);
+    log(`🖐️ ${estadoRevision.pendientes.length} escenas esperan revisión manual (límite: ${limite}).`);
+  } else {
+    log(`✅ Sin escenas pendientes de revisión manual.`);
   }
   verificarCobertura(escenas, "fin del proceso");
+  // COBERTURA FINAL: último intento de descarga automática con búsqueda degradada
+  const faltantesFinales = escenas.map(e => e.numero).filter(n => !numerosDescargados.has(n));
+  if (faltantesFinales.length > 0) {
+    log(`🔄 Cobertura final: ${faltantesFinales.length} escenas sin imagen. Último intento automático...`);
+    for (const numFaltante of faltantesFinales) {
+      const escenaFaltante = escenas.find(e => e.numero === numFaltante);
+      if (!escenaFaltante) continue;
+      try {
+        const degradada = degradarBusqueda(escenaFaltante.busqueda) || escenaFaltante.busqueda;
+        let candsFinal = await buscarEnTodasLasFuentes(degradada);
+        if (candsFinal.length === 0) {
+          const generica = `${degradada} movie still`;
+          candsFinal = await buscarEnTodasLasFuentes(generica);
+        }
+        if (candsFinal.length > 0) {
+          const candFinal = candsFinal[0];
+          const urlFinal = candFinal.fullChain[0] || candFinal.thumb;
+          const blobFinal = await (await fetch(urlFinal)).blob();
+          const numStrFinal = String(numFaltante).padStart(3, "0");
+          const nombreFinal = `${numStrFinal}_${escenaFaltante.busqueda}`.replace(/[\\/:*?"<>|]/g, "_").slice(0, 60) + ".jpg";
+          const guardadoFinal = await guardarArchivo(nombreFinal, blobFinal);
+          archivosDescargados.push({ nombre: nombreFinal, blob: blobFinal });
+          numerosDescargados.add(numFaltante);
+          log(`✅ ${guardadoFinal.ruta} (cobertura final)`);
+        } else {
+          log(`❌ Escena ${numFaltante}: sin imagen ni con búsqueda degradada.`);
+          if (!escenasFallidas.includes(numFaltante)) escenasFallidas.push(numFaltante);
+        }
+      } catch (e) {
+        log(`❌ Error en cobertura final escena ${numFaltante}: ${e.message}`);
+        if (!escenasFallidas.includes(numFaltante)) escenasFallidas.push(numFaltante);
+      }
+    }
+    if (archivosDescargados.length > 0) {
+      await empaquetarEnZip(escenas);
+    }
+  }
   if (escenasFallidas.length > 0) {
     log(`❌ Escenas sin imagen: ${escenasFallidas.join(", ")}`);
   }
@@ -1862,9 +2035,15 @@ document.getElementById("btn_comenzar").addEventListener("click", async () => {
   document.getElementById("btn_comenzar").style.display = "inline-block";
   // Empaquetar en ZIP
   if (descargadas > 0) await empaquetarEnZip(escenas);
+  } catch (err) {
+    console.error("[btn_comenzar] Error:", err);
+    log(`❌ Error crítico en el proceso: ${err.message}`, "error");
+    document.getElementById("btn_cancelar").style.display = "none";
+    document.getElementById("btn_comenzar").style.display = "inline-block";
+  }
 });
 
-document.getElementById("btn_cancelar").addEventListener("click", () => {
+on("btn_cancelar", "click", () => {
   detenerSolicitado = true;
   log("Cancelación solicitada...");
 });
@@ -1876,3 +2055,40 @@ puerto.onDisconnect.addListener(() => {
   if (MODO_SILENCIOSO) return;
   console.log("Panel lateral cerrado.");
 });
+
+// ============================================================
+// LISTENERS FALTANTES: modal_cerrar, vistas sospechosas
+// ============================================================
+
+on("modal_cerrar", "click", () => {
+  document.getElementById("modal_completado").style.display = "none";
+});
+
+on("btn_sospechosas", "click", () => {
+  document.getElementById("vista_sospechosas").style.display = "block";
+  document.getElementById("btn_sospechosas").style.display = "none";
+});
+
+on("cerrar_sospechosas", "click", () => {
+  document.getElementById("vista_sospechosas").style.display = "none";
+});
+
+on("sospechosas_usar", "click", () => {
+  log("✅ Imagen sospechosa aceptada y descargada.");
+  document.getElementById("vista_sospechosas").style.display = "none";
+});
+
+on("sospechosas_saltar", "click", () => {
+  log("⏭️ Imagen sospechosa descartada.");
+  document.getElementById("vista_sospechosas").style.display = "none";
+});
+
+console.log("[sidepanel.js] Script cargado correctamente. Listeners registrados.");
+
+// Diagnóstico al cargar
+setTimeout(() => {
+  if (typeof window.__verificarElementos === "function") {
+    window.__verificarElementos();
+  }
+  console.log("[sidepanel.js] ✅ Script cargado. Listeners registrados con helper 'on()'.");
+}, 100);

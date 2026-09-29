@@ -1,0 +1,30 @@
+{
+  "boards": [
+    "ai art",
+    "aiart",
+    "ai generated",
+    "midjourney",
+    "digital art ai",
+    "concept art ia",
+    "fan art ia",
+    "wallpapers ia",
+    "ai cinema",
+    "ai marvel",
+    "ai dc",
+    "ai superhero",
+    "ai movies"
+  ],
+  "dominios": [
+    "midjourney.com",
+    "leonardo.ai",
+    "civitai.com",
+    "artbreeder.com",
+    "nightcafe.studio",
+    "dreamstudio.ai",
+    "kaiber.ai",
+    "pika.art",
+    "runwayml.com",
+    "playgroundai.com",
+    "craiyon.com"
+  ]
+}

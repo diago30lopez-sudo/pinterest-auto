@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Pinterest Auto-Descargador IA",
-  "version": "3.0",
-  "description": "Busca y descarga imágenes de Pinterest eligiendo la mejor coincidencia por heurística.",
+  "version": "1.2.0",
+  "description": "Busca y descarga imágenes de Pinterest con 3 queries por escena, eligiendo la mejor coincidencia con heurística, detectores de texto/póster en Canvas y OCR local.",
   "permissions": ["storage", "downloads", "sidePanel", "unlimitedStorage"],
   "host_permissions": [
     "https://*.pinterest.com/*",
     "https://*.pinimg.com/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*"
+    "https://cdn.jsdelivr.net/*",
+    "https://tessdata.projectnaptha.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -24,7 +24,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["jszip.min.js"],
+      "resources": ["jszip.min.js", "tesseract.min.js", "blacklist_ia.json"],
       "matches": ["<all_urls>"]
     }
   ]

@@ -1,98 +1,160 @@
 # 🖼️ Pinterest Auto-Descargador IA
 
-Extensión de Chrome (Manifest V3) que busca imágenes en Pinterest y usa un **motor heurístico avanzado** (fases + BM25-lite + cobertura de términos) para elegir la mejor coincidencia de cada escena de un guion, descargando solo la imagen ganadora con el nombre de la escena. Se abre como **panel lateral** (side panel) al hacer clic en el icono.
+Extensión de Chrome que busca imágenes en Pinterest para escenas de video, aplica filtros avanzados y las descarga renombradas automáticamente.
 
-## 🔧 Qué hace
+## 🚀 Instalación
 
-1. Pegas un guion con múltiples escenas en el formato:
-   ```
-   ESCENA 1
-   EL VIAJERO CAMINA POR LA CALLE
-   BÚSQUEDA DE IMAGEN: "un hombre caminando en la ciudad"
+1. Descarga el repositorio como ZIP o clónalo con `git clone`.
+2. Abre `chrome://extensions` en Chrome.
+3. Activa "Modo de desarrollador" (arriba a la derecha).
+4. Pulsa "Cargar descomprimida".
+5. Selecciona la carpeta del proyecto.
 
-   ESCENA 2
-   ...
-   BÚSQUEDA DE IMAGEN: "atardecer en la playa"
-   ```
-2. Por cada escena, el background pide hasta **25 candidatas** a Pinterest (API + fallback SSR).
-3. El panel lateral puntúa cada candidata con el motor heurístico (sujeto, palabras clave, formato/aspect ratio, planos, colores, año, resolución, popularidad, posición) y ordena por puntuación (Fase 1: **TOP 10**).
-4. *(Opcional)* Si activas la **verificación visual con IA**, las 10 mejores pasan a una Fase 2 que envía las miniaturas a **FreeLLMAPI** (modelo de visión barato y rápido, p. ej. MiniCPM-V 4.6) para que elija la coincidencia visual real.
-5. Se descarga **solo la ganadora** con el nombre `001_<búsqueda>.jpg`, numerada 001, 002, 003…
-6. Un **dHash** descarta imágenes duplicadas entre escenas (historial en `chrome.storage.session`, limpiado al cerrar el panel).
-7. Un filtro local previo descarta candidatas con señales de **imagen generada por IA** (midjourney, dalle, stable diffusion…).
-8. Al terminar, las imágenes de la tanda se empaquetan en un **ZIP**.
+## ⚙️ Uso
 
-## 📁 Carpeta de destino
+1. Abre el panel lateral de la extensión (icono en la barra).
+2. Pega tu guion de escenas en el área de texto.
+3. Elige carpeta de destino.
+4. Pulsa **COMENZAR**.
+5. Al terminar, aparece un modal con el resumen. Las imágenes quedan en la carpeta elegida + un ZIP.
 
-- Por defecto se guarda en **Descargas/pinterest_descargas/**.
-- Con el botón **"📁 Elegir carpeta de destino"** eliges una carpeta cualquiera mediante el File System Access API (`showDirectoryPicker`); el handle se persiste en **IndexedDB** para conservarla entre sesiones.
-- El botón **"Restablecer a Descargas"** vuelve al destino por defecto.
-- Si al guardar en la carpeta elegida ocurre un error, se hace **fallback automático a Descargas**.
-
-## 📦 Archivos
+## 📝 Formato del guion
 
 ```
-pinterest-auto/
-├── manifest.json      # Configuración de la extensión (MV3)
-├── sidepanel.html     # Interfaz del panel lateral
-├── sidepanel.css      # Estilos dark mode
-├── sidepanel.js       # Bucle principal, heurístico y descarga local
-├── background.js      # Fetch de Pinterest + heurístico (obtenerCandidatas)
-├── jszip.min.js       # Generación del ZIP final
-└── icon.png           # Icono 128x128
+ESCENA #1
+VOZ EN OFF: "..."
+DURACIÓN ESTIMADA: X segundos
+BÚSQUEDA DE IMAGEN (Google/Pinterest): "texto de búsqueda, 16:9"
 ```
 
-## 🚀 Cómo cargar la extensión en Chrome
+La extensión detecta automáticamente `ESCENA #N` y `BÚSQUEDA DE IMAGEN: "..."`.
 
-1. **Abre Chrome** y ve a `chrome://extensions`.
-2. Activa el **"Modo desarrollador"** (interruptor en la esquina superior derecha).
-3. Pulsa el botón **"Cargar descomprimida"**.
-4. Selecciona la carpeta **`pinterest-auto`** (la que contiene el `manifest.json`).
-5. Fija el icono en tu barra de Chrome (clic en la pieza de puzzle → anclar).
-6. Haz clic en el icono 🖼️ y se abrirá el **panel lateral** con la aplicación.
+## 🧠 Cómo funciona
 
-## ▶️ Cómo usar
+Por cada escena:
 
-1. **Pega** tu guion en el área de texto grande.
-2. (Opcional) Pulsa **📁 Elegir carpeta de destino** para fijar una carpeta propia.
-3. Pulsa **🚀 COMENZAR**.
-4. Observa el progreso en el log en vivo. Puedes pulsar **⏹ Cancelar** en cualquier momento.
+1. **Triple búsqueda en Pinterest** por escena (3 queries) con `16:9` al final, fusionadas y deduplicadas por URL:
+   - `[búsqueda] movie still 16:9`
+   - `[búsqueda] film frame cinematic scene 16:9`
+   - `[búsqueda] live action production still 16:9`
+2. **Limpieza de la query** antes de buscar: se quitan palabras que atraen material de IA (`concepto`, `key art`, `character poster`, `fan art`, `arte digital`, `épica`, `AI`, `midjourney`, `4K`…) respetando acentos y sin comerse palabras que las contengan (`Loki` intacto, `casa` intacto).
+3. **Filtros locales en cascada**:
+   - URL de generador de IA (midjourney, dalle, etc.)
+   - URL sospechosa (youtube.com, imdb.com, etc.)
+   - Blacklist de boards/dominios de IA
+   - Metadatos con señales IA
+   - Metadatos de póster
+   - Aspect ratio (0.65 - 2.4)
+4. **Heurístico avanzado** elige TOP 10 candidatas.
+5. **Anti-duplicados multi-hash**: pHash + aHash + dHash + URL + pin_id + título.
+6. **Validación visual en 4 señales, en este orden** (Canvas puro; Tesseract va el último a propósito, porque cuesta 1-2 s por imagen):
+   1. `detectGraphicText` — estructura tipográfica: mide la forma del texto (bandas de bordes verticales/horizontales, contraste por bandas, cobertura y peakedness). Caza títulos con glow, logos y tipografías de película donde Tesseract no llega.
+   2. `detectPosterLayout` — composición: aspecto vertical + densidad de "créditos" en la franja inferior + concentración en el tercio superior.
+   3. `tieneTextoEnImagen` — Tesseract, **solo si la imagen pasó las dos anteriores y la Fase 1 detectó zonas de texto**.
+   4. `detectAILikeSignals` — piel plástica (bloques de rango de grises muy estrecho pero no planos) + fondo de estudio (las 4 esquinas del mismo color).
+7. **Zonas dudosas**: entre el umbral de duda y el de rechazo, la imagen **no se descarga**. Va a `Revisar sospechosas` con el detalle de qué señal la marcó.
+8. **Cascada de emergencia**: si nada pasa los filtros, se usa la mejor heurística (y también va a revisión manual).
 
-## 🧪 Consejos
+### Umbrales de detección
 
-- Asegúrate de estar **con sesión iniciada en Pinterest** para mejores resultados.
-- Si una escena falla (sin candidatas), se registra el error y **continúa con la siguiente**.
-- La extensión espera **1,5 s** entre escenas para no saturar el sistema.
-- Las imágenes duplicadas entre escenas se saltan automáticamente.
+| Señal | Dudosa | Rechazo |
+| ----- | ------ | ------- |
+| Texto visual (bandas de bordes) | ≥ 0.55 | ≥ 0.80 |
+| Composición de póster | ≥ 0.55 | ≥ 0.78 |
+| OCR (Tesseract) | ≥ 20 | ≥ 40 |
+| IA-like (piel plástica) | ≥ 0.50 | ≥ 0.72 |
 
-## 🧠 Verificación Visual con IA (FreeLLMAPI — opcional)
+Viven en `RULES` (`sidepanel.js`) y el panel "🔬 Umbrales de detección" los refleja desde ahí, así que no hay números escritos a mano en dos sitios. En el caso de IA-like, `cornerUniformity` es 0/1: para llegar a 0.72 hacen falta las dos señales a la vez, nunca una sola.
 
-La extensión usa una **arquitectura de 2 fases**: primero el heurístico ordena las candidatas y devuelve las 10 mejores; si activas la IA, un modelo de visión (multi-modal, barato y rápido) revisa las 10 miniaturas y confirma cuál encaja de verdad con la descripción (ideal para casos donde el texto menciona algo visual específico, p. ej. "Tío Ben" frente a "Ned"). Si la IA falla, se usa el resultado heurístico.
+## 📦 Versiones
 
-### Instalación de FreeLLMAPI
+### v1.0.0 — Versión base
 
-1. **Descarga e instala FreeLLMAPI** desde su repositorio oficial.
-2. **Configura las API keys** de los proveedores que quieras usar (Google AI Studio, ModelScope, etc.).
-3. **Prioriza el modelo MiniCPM-V 4.6** en la cadena de ruteo (o cualquier modelo multimodal de bajo costo).
-4. **Arranca el servidor** en `http://localhost:3001`.
+- Búsqueda en Pinterest vía endpoint interno (`BaseSearchResource/get/`).
+- Algoritmo heurístico con análisis de sujeto, franquicia, plano, colores, popularidad.
+- Anti-duplicados por dHash + aHash + ColorHash.
+- Selección de carpeta con File System Access API.
+- Numeración de archivos (`001_...jpg`, `002_...jpg`).
+- Botón Cancelar.
+- ZIP final con todas las imágenes.
+- **Sin filtros de IA ni OCR**: los resultados dependían solo del heurístico.
 
-### Configuración en la extensión
+### v1.1.0 — Filtros reforzados + Revisión manual
 
-1. Abre la sección **"🧠 Verificación Visual con IA"** en el panel lateral.
-2. Pega la **URL** (`http://localhost:3001/v1`), la **key** (si FreeLLMAPI la requiere) y el **modelo** (`minicpm-v-4.6`).
-3. Pulsa **"Probar conexión"**; verás la lista de modelos disponibles y podrás elegir uno del desplegable.
-4. Activa el checkbox **"Usar verificación visual"**.
-5. Procesa el guion normalmente.
+- **Filtros anti-póster / anti-IA / anti-texto** ampliados en metadatos y URL.
+- **Filtro de aspect ratio** estricto (< 0.65 o > 2.4 rechazados).
+- **Sistema de revisión manual** con botón naranja y contador.
+- **Vista de 4 variantes** por escena dudosa con botones refrescar/saltar.
+- **Lote de escenas para revisión** máximo 10 (configurable).
+- **Búsquedas degradadas** automáticas si Pinterest devuelve 0 candidatas.
+- **Input de archivo `.txt` / `.md`** para cargar guiones.
+- **Modal de completado** al terminar el proceso.
 
-### Seguridad
+### v1.2.0 — OCR ultra robusto + Eliminación de IA visual
 
-- Si no confías en FreeLLMAPI, deja el checkbox desactivado: la extensión funcionará **solo con el heurístico**.
-- Las imágenes se envían al endpoint configurado, así que debe ser un **endpoint propio o de confianza**.
-- El filtro de imágenes IA es heurístico (por texto). Para detección robusta necesitarías metadatos **C2PA** o una API dedicada (Sightengine, Hive); esta heurística cubre ~60-70 % de los casos.
+- **Eliminada la integración con FreeLLMAPI** (daba 429/503 constantes y activaba cooldowns de 60s).
+- **OCR en 2 fases**:
+  - Fase 1: detección visual barata de zonas con texto (`detectarRegionesSospechosas`).
+  - Fase 2: Tesseract OCR con escala adaptativa (3.0x / 2.0x / 1.5x / 1.0x según tamaño).
+- **Dos versiones de preprocesamiento**: gris-contraste + binarizada con umbral adaptativo.
+- **Doble PSM**: PSM 11 (sparse) sobre gris-contraste, PSM 6 (block) sobre binarizada si confianza baja.
+- **Scoring ponderado** (no binario) con reglas acumulativas:
+  - Palabras prohibidas exactas: +100
+  - Palabras prohibidas contenidas: +60
+  - Años (1900-2099): +40
+  - Mayúsculas de 4+ letras (sobre texto original): +25
+  - Bounding box > 30% del ancho: +25
+  - 3+ palabras alineadas horizontalmente: +20
+  - \>15 palabras detectadas: +50
+  - **Umbral de rechazo: score ≥ 100**
+- **Anti-duplicados mejorado**: historial total (no solo las últimas 8).
+- **Comparación por pin_id y URL exacta** además de hashes.
+- **Blacklist de boards/dominios** de IA en `blacklist_ia.json`.
+- **Fix mayúsculas**: verificar sobre texto original (evita falsos positivos como `Hello` → `HELLO`).
+- **Sin dependencias de APIs externas de IA**: solo Tesseract (local).
+- **Sin cooldowns ni rate limits**: proceso ~2x más rápido que v1.1.0.
 
-## ✅ Requisitos
+### v1.3.0 — Detección de texto/póster en Canvas + triple búsqueda
 
-- Chrome / Chromium (funciona con Edge, Brave, Opera, etc.).
-- Permisos declarados en el manifest: `downloads`, `storage`, `sidePanel`, `unlimitedStorage`, `http://localhost/*`, `http://127.0.0.1/*` (para FreeLLMAPI local).
-- **No** usa frameworks ni librerías externas: todo es JavaScript nativo con las APIs de Chrome (JSZip solo para el empaquetado final).
-- *(Opcional)* **FreeLLMAPI** corriendo en local si quieres la verificación visual.
+- **4 detectores estructurales** que no leen letras, miden la forma (`detectGraphicText`, `detectPosterLayout`, `detectAILikeSignals`, `detectarRegionesSospechosas`).
+- **Orden deliberado**: texto → póster → Tesseract → IA-like. Tesseract (~1-2 s) solo se lanza si la imagen pasa las dos señales baratas y hay zonas de texto en la Fase 1.
+- **Un único bitmap por candidata** (`obtenerBitmap`): los tres detectores comparten la imagen descargada en lugar de pedirla cada uno.
+- **`detectGraphicText` recalibrado**: el umbral por percentil absoluto (p82) marcaba como texto un degradado liso, porque garantiza que ~18% de los píxeles supere el umbral. Ahora los umbrales de borde son relativos a la mediana y al p95 de cada imagen, más una penalización por textura uniforme y una comprobación de localización (mediana de las 3 bandas), de modo que un título grande y localizado sube a ~0.89-0.94 y un degradado se queda en ~0.01.
+- **OCR con umbral 40 en vez de 100**, con zona dudosa desde 20 (antes cualquier cosa por debajo de 100 pasaba sin avisar).
+- **Zonas dudosas** por señal: la imagen no se descarga y pasa a `Revisar sospechosas` con el motivo.
+- **Triple búsqueda** por escena con `movie still` / `film frame cinematic scene` / `live action production still`, fusionada con `Promise.all` y deduplicada por URL.
+- **Limpieza de query** con lista de palabras de IA, `quitarPalabra` con límites Unicode (`\p{L}`/`\p{N}`, sensible a acentos) y connector cleanup para no dejar comas ni conectores colgando.
+- **Panel "🔬 Umbrales de detección"** en `sidepanel.html`, alimentado desde `RULES`.
+
+## 🛠️ Requisitos técnicos
+
+- Google Chrome (o Edge/Brave basado en Chromium).
+- Nada más. Tesseract.js viene incluido en el proyecto.
+- No requiere Node.js, Python ni servidores externos.
+
+## 📊 Rendimiento
+
+- **Tiempo por escena**: 8-15 segundos.
+- **Procesamiento de 276 escenas**: ~1h 30min.
+- **Detección de texto (OCR)**: ~85-90 % de imágenes con texto visible.
+- **Falsos positivos**: ajustables según el umbral de scoring.
+
+## ⚠️ Limitaciones conocidas
+
+- **Texto muy estilizado** con glow/gótico puede no ser detectado.
+- **Texto pequeño** (< 10px de altura) puede no ser detectado.
+- **Texto rotado** más de 15° puede fallar.
+- **Pinterest puede cambiar el endpoint interno** sin aviso (hay fallback SSR).
+- No se pueden descargar vídeos, solo imágenes.
+
+## 📄 Licencia
+
+Uso personal. Consulta los Términos de Servicio de Pinterest antes de redistribuir.
+
+## 🐛 Reportar bugs
+
+Abre un issue en el repositorio con:
+
+- Log completo de la consola del service worker.
+- Captura del error.
+- Versión de Chrome.
