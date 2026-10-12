@@ -49,13 +49,9 @@ window.__verificarElementos = () => {
     "btn_revisar", "contador_revision",
     "vista_revision", "revision_progreso", "revision_busqueda", "revision_imagenes",
     "revision_acciones", "revision_refrescar", "revision_saltar", "cerrar_revision",
-    "btn_sospechosas", "contador_sospechosas",
-    "vista_sospechosas", "sospechosas_progreso", "sospechosas_busqueda",
-    "sospechosas_razon", "sospechosas_elegida", "sospechosas_alternativas",
-    "sospechosas_acciones", "sospechosas_usar", "sospechosas_saltar",
-    "cerrar_sospechosas",
     "modal_completado", "modal_icono", "modal_titulo", "modal_mensaje", "modal_cerrar",
-    "input_escena_numero", "btn_buscar_escena", "busqueda_manual_container"
+    "input_escena_numero", "btn_buscar_escena", "busqueda_manual_container",
+    "busqueda_manual_resultados", "manual_busqueda_info", "manual_resultados", "btn_cerrar_busqueda_manual"
   ];
   const faltantes = idsRequeridos.filter(id => !document.getElementById(id));
   if (faltantes.length) {
@@ -822,6 +818,77 @@ async function calcularHashtriple(url) {
 }
 
 // ============================================================
+// ANTI-DUPLICADOS POR CARPETA (hash triple)
+// ============================================================
+const UMBRAL_PHASH_DUPLICADO = 10;
+const UMBRAL_AHASH_DUPLICADO = 10;
+const UMBRAL_DHASH_DUPLICADO = 10;
+const CLAVE_HISTORIAL_CARPETA = "historialPorCarpeta";
+
+async function obtenerHistorialCarpeta(nombreCarpeta) {
+  const data = await chrome.storage.local.get(CLAVE_HISTORIAL_CARPETA);
+  const todo = data[CLAVE_HISTORIAL_CARPETA] || {};
+  return todo[nombreCarpeta] || { hashes: [], nombres: [] };
+}
+
+async function guardarHistorialCarpeta(nombreCarpeta, historial) {
+  const data = await chrome.storage.local.get(CLAVE_HISTORIAL_CARPETA);
+  const todo = data[CLAVE_HISTORIAL_CARPETA] || {};
+  todo[nombreCarpeta] = historial;
+  await chrome.storage.local.set({ [CLAVE_HISTORIAL_CARPETA]: todo });
+}
+
+async function esDuplicadoEnCarpeta(candidata, nombreCarpeta) {
+  if (!nombreCarpeta) return false;
+  const hist = await obtenerHistorialCarpeta(nombreCarpeta);
+  if (!hist.hashes.length) return false;
+  const h = await calcularHashesDuplicado(candidata.thumb);
+  if (!h.pHash || !h.aHash || !h.dHash) return false;
+  for (const prev of hist.hashes) {
+    const dP = hammingPHash(h.pHash, prev.pHash);
+    const dA = hammingPHash(h.aHash, prev.aHash);
+    const dD = hammingPHash(h.dHash, prev.dHash);
+    if (dP <= UMBRAL_PHASH_DUPLICADO) return true;
+    if (dA <= UMBRAL_AHASH_DUPLICADO) return true;
+    if (dD <= UMBRAL_DHASH_DUPLICADO) return true;
+  }
+  return false;
+}
+
+async function calcularHashesDuplicado(url) {
+  try {
+    const [pHash, aHash, dHash] = await Promise.all([
+      calcularDHash(url).catch(() => null),
+      calcularAHash(url).catch(() => null),
+      calcularColorHash(url).catch(() => null)
+    ]);
+    return { pHash, aHash, dHash };
+  } catch { return null; }
+}
+
+function hammingPHash(h1, h2) {
+  if (!h1 || !h2) return 999;
+  let d = 0;
+  for (let i = 0; i < h1.length; i++) {
+    let bits = parseInt(h1[i], 16) ^ parseInt(h2[i], 16);
+    while (bits) { d += bits & 1; bits >>= 1; }
+  }
+  return d;
+}
+
+async function registrarEnHistorialCarpeta(candidata, nombreArchivo) {
+  if (!carpetaElegidaHandle || !carpetaElegidaHandle.name) return;
+  const nombre = carpetaElegidaHandle.name;
+  const hist = await obtenerHistorialCarpeta(nombre);
+  const h = await calcularHashesDuplicado(candidata.thumb);
+  if (h.pHash && h.aHash && h.dHash) {
+    hist.hashes.push({ pHash: h.pHash, aHash: h.aHash, dHash: h.dHash });
+  }
+  hist.nombres.push(nombreArchivo);
+  await guardarHistorialCarpeta(nombre, hist);
+}
+
+// ============================================================
 // FASE 2: VERIFICACIÓN VISUAL CON FREELMAPI
 // ============================================================
 
@@ -1036,34 +1103,11 @@ on("freellm_modelos", "change", async (e) => {
   await chrome.storage.local.set({ freellmModel: e.target.value });
 });
 
-// ============================================================
-// Empaquetado ZIP de las imágenes descargadas en esta tanda
-// ============================================================
-
-let archivosDescargados = [];
+// Counter for downloaded images (ZIP packaging removed)
+let imagenesDescargadasCount = 0;
 let escenasProcesoActual = [];
 
-async function empaquetarEnZip(escenas) {
-  if (!archivosDescargados.length) return;
-  log("📦 Empaquetando imágenes en ZIP...");
-  try {
-    const zip = new JSZip();
-    for (const item of archivosDescargados) {
-      zip.file(item.nombre, item.blob);
-    }
-    const blobZip = await zip.generateAsync({ type: "blob" });
-    const urlBlob = URL.createObjectURL(blobZip);
-    await chrome.downloads.download({
-      url: urlBlob,
-      filename: "pinterest_descargas.zip",
-      conflictAction: "overwrite",
-      saveAs: false
-    });
-    log(`✅ ZIP generado: pinterest_descargas.zip (${archivosDescargados.length} imágenes)`);
-  } catch (error) {
-    log(`Error generando ZIP: ${error.message}`, "error");
-  }
-}
+
 
 // ============================================================
 // BÚSQUEDA (única fuente: Pinterest)
@@ -1341,25 +1385,74 @@ function mostrarBotonRevisar() {
 
 // ============================================================
 // BÚSQUEDA MANUAL POR NÚMERO DE ESCENA
-// Reutiliza la vista de revisión para mostrar las candidatas.
+// Modal con grid 3x2, activado con Enter o click.
 // ============================================================
-async function abrirVistaBusquedaManual(escena, candidatas) {
-  if (!candidatas || candidatas.length === 0) {
-    alert(`No se encontraron candidatas para la escena #${escena.numero}`);
+async function abrirBusquedaManual(escena, candidatas) {
+  const container = document.getElementById("busqueda_manual_resultados");
+  const info = document.getElementById("manual_busqueda_info");
+  const grid = document.getElementById("manual_resultados");
+  container.style.display = "block";
+  info.textContent = `Escena #${escena.numero}: "${escena.busqueda}"`;
+
+  // Analizar carpeta para saber qué ya existe
+  const nombreCarpeta = carpetaElegidaHandle ? carpetaElegidaHandle.name : null;
+  const histCarpeta = nombreCarpeta ? await obtenerHistorialCarpeta(nombreCarpeta) : { nombres: [] };
+  log(`📁 Carpeta: ${nombreCarpeta || "(Descargas por defecto)"} · ${histCarpeta.nombres.length} imágenes previas.`);
+
+  // Filtrar duplicados de carpeta
+  const candidatasFiltradas = [];
+  for (const c of candidatas) {
+    if (nombreCarpeta && await esDuplicadoEnCarpeta(c, nombreCarpeta)) continue;
+    candidatasFiltradas.push(c);
+  }
+  const pool = candidatasFiltradas.length > 0 ? candidatasFiltradas : candidatas;
+
+  // Mostrar máximo 6 en grid 3x2
+  const indicesTop = elegirTop10(escena.busqueda, pool).slice(0, 6);
+  const top6 = indicesTop.map(i => pool[i]);
+  grid.innerHTML = "";
+
+  if (top6.length === 0) {
+    grid.innerHTML = '<div style="grid-column: 1/-1; color:#f87171; text-align:center; padding:20px; font-size:13px;">❌ Escena no disponible</div>';
     return;
   }
-  const top6Indices = elegirTop10(escena.busqueda, candidatas).slice(0, 6);
-  const top6 = top6Indices.map(i => candidatas[i]);
-  // Añadimos la escena a pendientes para revisión manual
-  estadoRevision.pendientes.push({
-    numero: escena.numero,
-    busqueda: escena.busqueda,
-    candidatas: top6,
-    cursor: 0,
-    score: 0
-  });
-  log(`🔍 Escena #${escena.numero} añadida a revisión manual (${top6.length} candidatas).`);
-  mostrarBotonRevisar();
+
+  for (let idx = 0; idx < top6.length; idx++) {
+    const cand = top6[idx];
+    const celda = document.createElement("div");
+    celda.style.cssText = "position: relative;";
+    const img = document.createElement("img");
+    img.src = cand.thumb;
+    img.style.cssText = "width: 100%; height: 100px; object-fit: cover; cursor: pointer; border: 2px solid transparent; border-radius: 4px; transition: border-color 0.2s;";
+    img.title = `Opción ${idx + 1}`;
+    img.addEventListener("click", async () => {
+      try {
+        const urlFull = cand.fullChain?.[0] || cand.thumb;
+        const blob = await (await fetch(urlFull)).blob();
+        const numStr = String(escena.numero).padStart(3, "0");
+        const nombreArchivo = `${numStr}_${escena.busqueda}`.replace(/[\\/:*?"<>|]/g, "_").slice(0, 60) + ".jpg";
+        const r = await guardarArchivo(nombreArchivo, blob);
+        imagenesDescargadasCount++;
+        numerosDescargados.add(escena.numero);
+        await registrarEnHistorialCarpeta(cand, nombreArchivo);
+        log(`✅ Imagen #${escena.numero} actualizada: ${r.ruta}`);
+        // Ocultar resultados inmediatamente
+        grid.innerHTML = "";
+        info.textContent = `✅ Imagen #${escena.numero} actualizada. Escribe otro número.`;
+        document.getElementById("input_escena_numero").value = "";
+      } catch (e) {
+        log(`❌ Error descargando escena #${escena.numero}: ${e.message}`, "error");
+      }
+    });
+    img.addEventListener("mouseover", () => img.style.borderColor = "#10a37f");
+    img.addEventListener("mouseout", () => img.style.borderColor = "transparent");
+    const badge = document.createElement("span");
+    badge.textContent = `${idx + 1}`;
+    badge.style.cssText = "position: absolute; top: 4px; left: 4px; background: rgba(0,0,0,.7); color: #fff; font-size: 10px; padding: 1px 5px; border-radius: 3px;";
+    celda.appendChild(img);
+    celda.appendChild(badge);
+    grid.appendChild(celda);
+  }
 }
 
 on("btn_buscar_escena", "click", async () => {
@@ -1372,7 +1465,13 @@ on("btn_buscar_escena", "click", async () => {
   const escenas = parsearGuion(guion);
   const escena = escenas.find(e => e.numero === numero);
   if (!escena) {
-    alert(`No se encontró la escena #${numero} en el guion cargado`);
+    // Mostrar "Escena no disponible" en el modal, no alert
+    const container = document.getElementById("busqueda_manual_resultados");
+    const info = document.getElementById("manual_busqueda_info");
+    const grid = document.getElementById("manual_resultados");
+    container.style.display = "block";
+    info.textContent = `Escena #${numero}: no disponible`;
+    grid.innerHTML = '<div style="grid-column: 1/-1; color:#f87171; text-align:center; padding:20px; font-size:13px;">❌ Escena no disponible</div>';
     return;
   }
   log(`🔍 Buscando manualmente escena #${escena.numero}: "${escena.busqueda}"`, "info");
@@ -1383,14 +1482,34 @@ on("btn_buscar_escena", "click", async () => {
       log(`⚠️ Sin candidatas. Reintentando con búsqueda degradada: "${degradada}"...`);
       const candidatasAlt = await buscarEnTodasLasFuentes(degradada);
       if (candidatasAlt.length > 0) {
-        await abrirVistaBusquedaManual(escena, candidatasAlt);
+        await abrirBusquedaManual(escena, candidatasAlt);
         return;
       }
     }
-    alert(`No se encontraron candidatas para la escena #${escena.numero}`);
+    const container = document.getElementById("busqueda_manual_resultados");
+    const info = document.getElementById("manual_busqueda_info");
+    const grid = document.getElementById("manual_resultados");
+    container.style.display = "block";
+    info.textContent = `Escena #${escena.numero}: "${escena.busqueda}"`;
+    grid.innerHTML = '<div style="grid-column: 1/-1; color:#f87171; text-align:center; padding:20px; font-size:13px;">❌ No se encontraron candidatas para esta escena</div>';
     return;
   }
-  await abrirVistaBusquedaManual(escena, candidatas);
+  await abrirBusquedaManual(escena, candidatas);
+});
+
+on("input_escena_numero", "keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const btn = document.getElementById("btn_buscar_escena");
+    if (btn) btn.click();
+  }
+});
+
+on("btn_cerrar_busqueda_manual", "click", () => {
+  document.getElementById("busqueda_manual_resultados").style.display = "none";
+  document.getElementById("manual_resultados").innerHTML = "";
+  document.getElementById("manual_busqueda_info").textContent = "";
+  document.getElementById("input_escena_numero").value = "";
 });
 
 // Ruido que Pinterest no entiende y solo restringe la búsqueda
@@ -1665,7 +1784,7 @@ async function descargarSeleccionesRevisadas() {
   }
   log(`⬇️ Descargando ${selecciones.length} imágenes seleccionadas...`);
   const { hashesVistos = [] } = await chrome.storage.session.get("hashesVistos");
-  let nuevasParaZip = 0;
+
   for (const [numero, sel] of selecciones) {
     try {
       const cand = sel.candidata;
@@ -1673,11 +1792,10 @@ async function descargarSeleccionesRevisadas() {
       const numStr = String(numero).padStart(3, "0");
       const nombreLimpio = `${numStr}_${sel.busqueda || cand.title || "escena"}`
         .replace(/[\\/:*?"<>|]/g, "_").slice(0, 60) + ".jpg";
-      const r = await guardarArchivo(nombreLimpio, blob);
-      // Se suman al conjunto para que el ZIP las incluya
-      archivosDescargados.push({ nombre: nombreLimpio, blob });
+const r = await guardarArchivo(nombreLimpio, blob);
+imagenesDescargadasCount++;
       numerosDescargados.add(Number(numero));
-      nuevasParaZip++;
+
       const hash = await calcularHashtriple(cand.thumb).catch(() => null);
       if (hash) hashesVistos.push({ ...hash, thumb: cand.thumb });
       log(`✅ ${r.ruta}`);
@@ -1688,12 +1806,7 @@ async function descargarSeleccionesRevisadas() {
   await chrome.storage.session.set({ hashesVistos });
   estadoRevision.selecciones = {};
   log(`✅ Revisión completada.`);
-  // Regenerar el ZIP solo si se ha añadido algo nuevo
-  if (nuevasParaZip > 0) {
-    await empaquetarEnZip(escenasProcesoActual);
-  } else {
-    log("ℹ️ Sin nuevas imágenes seleccionadas: el ZIP no se modifica.");
-  }
+
   if (estadoRevision.indiceActual >= estadoRevision.pendientes.length) {
     if (estadoRevision.saltadas.length) {
       log(`⚠️ Escenas sin imagen (saltadas): ${estadoRevision.saltadas.join(", ")}`);
@@ -1811,7 +1924,7 @@ on("btn_comenzar", "click", async () => {
   document.getElementById("btn_cancelar").style.display = "inline-block";
   document.getElementById("btn_comenzar").style.display = "none";
   let descargadas = 0;
-  archivosDescargados = [];
+  imagenesDescargadasCount = 0;
   escenasProcesoActual = escenas;
   escenasFallidas = [];
   numerosDescargados = new Set();
@@ -1900,6 +2013,29 @@ on("btn_comenzar", "click", async () => {
         continue; // NO se descarga ahora
       }
       log(`✅ Escena ${escena.numero}: elegida por nivel ${resultado.nivel}`);
+      // Capa anti-duplicado por carpeta
+      if (carpetaElegidaHandle && carpetaElegidaHandle.name) {
+        if (await esDuplicadoEnCarpeta(resultado.candidata, carpetaElegidaHandle.name)) {
+          log(`🚫 Escena ${escena.numero}: imagen ya presente en esta carpeta. Probando siguiente...`, "warn");
+          // Buscar siguiente candidata no duplicada
+          let reemplazo = null;
+          for (const c of candidatas) {
+            if (c === resultado.candidata) continue;
+            const hashC = await calcularHashtriple(c.thumb).catch(() => null);
+            if (hashC && await esSimilarAHistorial(hashes)(hashC)) continue;
+            if (!carpetaElegidaHandle || !(await esDuplicadoEnCarpeta(c, carpetaElegidaHandle.name))) {
+              reemplazo = { candidata: c, nivel: resultado.nivel, hash: hashC };
+              break;
+            }
+          }
+          if (reemplazo) {
+            resultado = reemplazo;
+            log(`🔄 Escena ${escena.numero}: reemplazada por alternativa no duplicada.`);
+          } else {
+            log(`⚠️ Escena ${escena.numero}: todas las candidatas son duplicadas en esta carpeta. Usando la mejor disponible.`);
+          }
+        }
+      }
       // Triple capa: deja constancia de qué capas rozan la imagen ganadora
       const capas = await evaluarCapasFiltro(resultado.candidata, hashes);
       if (!capas.limpia) {
@@ -1914,9 +2050,10 @@ on("btn_comenzar", "click", async () => {
       const blob = await (await fetch(urlFull)).blob();
       const numStr = String(escena.numero).padStart(3, "0");
       const nombreLimpio = `${numStr}_${escena.busqueda}`.replace(/[\\/:*?"<>|]/g, "_").slice(0, 60) + ".jpg";
-      const guardarResultado = await guardarArchivo(nombreLimpio, blob);
-      archivosDescargados.push({ nombre: nombreLimpio, blob });
+const guardarResultado = await guardarArchivo(nombreLimpio, blob);
+imagenesDescargadasCount++;
       numerosDescargados.add(escena.numero);
+      await registrarEnHistorialCarpeta(resultado.candidata, nombreLimpio);
       if (resultado.hash) {
         hashes.push({ ...resultado.hash, thumb: resultado.candidata.thumb });
         await chrome.storage.session.set({ hashesVistos: hashes });
@@ -1962,8 +2099,9 @@ on("btn_comenzar", "click", async () => {
         const numStr = String(pendiente.numero).padStart(3, "0");
         const nombreLimpio = `${numStr}_${pendiente.busqueda}`.replace(/[\\/:*?"<>|]/g, "_").slice(0, 60) + ".jpg";
         const guardarResultado = await guardarArchivo(nombreLimpio, blob);
-        archivosDescargados.push({ nombre: nombreLimpio, blob });
+imagenesDescargadasCount++;
         numerosDescargados.add(pendiente.numero);
+        await registrarEnHistorialCarpeta(cand, nombreLimpio);
         const hash = await calcularHashtriple(cand.thumb).catch(() => null);
         if (hash) {
           hashes.push({ ...hash, thumb: cand.thumb });
@@ -2011,8 +2149,9 @@ on("btn_comenzar", "click", async () => {
           const numStrFinal = String(numFaltante).padStart(3, "0");
           const nombreFinal = `${numStrFinal}_${escenaFaltante.busqueda}`.replace(/[\\/:*?"<>|]/g, "_").slice(0, 60) + ".jpg";
           const guardadoFinal = await guardarArchivo(nombreFinal, blobFinal);
-          archivosDescargados.push({ nombre: nombreFinal, blob: blobFinal });
+imagenesDescargadasCount++;
           numerosDescargados.add(numFaltante);
+          await registrarEnHistorialCarpeta(candFinal, nombreFinal);
           log(`✅ ${guardadoFinal.ruta} (cobertura final)`);
         } else {
           log(`❌ Escena ${numFaltante}: sin imagen ni con búsqueda degradada.`);
@@ -2023,18 +2162,56 @@ on("btn_comenzar", "click", async () => {
         if (!escenasFallidas.includes(numFaltante)) escenasFallidas.push(numFaltante);
       }
     }
-    if (archivosDescargados.length > 0) {
-      await empaquetarEnZip(escenas);
-    }
+
   }
   if (escenasFallidas.length > 0) {
     log(`❌ Escenas sin imagen: ${escenasFallidas.join(", ")}`);
   }
+  // COBERTURA ABSOLUTA: por cada escena sin imagen, forzar descarga con la mejor
+  // candidata disponible (incluso si ya está descargada con otro nombre).
+  const escenasEsperadas = escenas.map(e => e.numero);
+  const faltanCobertura = escenasEsperadas.filter(n => !numerosDescargados.has(n));
+  if (faltanCobertura.length > 0) {
+    log(`🔄 Cobertura absoluta: ${faltanCobertura.length} escenas sin imagen. Forzando descarga...`, "warn");
+    for (const numF of faltanCobertura) {
+      const escF = escenas.find(e => e.numero === numF);
+      if (!escF) continue;
+      try {
+        const degradada = degradarBusqueda(escF.busqueda) || escF.busqueda;
+        let candsF = await buscarEnTodasLasFuentes(degradada);
+        if (!candsF || candsF.length === 0) {
+          candsF = await buscarEnTodasLasFuentes(`${degradada} movie still`);
+        }
+        if (candsF && candsF.length > 0) {
+          const candF = candsF[0];
+          const urlF = candF.fullChain?.[0] || candF.thumb;
+          const blobF = await (await fetch(urlF)).blob();
+          const numStrF = String(numF).padStart(3, "0");
+          const nombreF = `${numStrF}_${escF.busqueda}`.replace(/[\\/:*?"<>|]/g, "_").slice(0, 60) + ".jpg";
+          await guardarArchivo(nombreF, blobF);
+          imagenesDescargadasCount++;
+          numerosDescargados.add(numF);
+          await registrarEnHistorialCarpeta(candF, nombreF);
+          descargadas++;
+          log(`✅ Escena ${numF}: cobertura absoluta OK (${nombreF})`);
+        } else {
+          log(`❌ Escena ${numF}: imposible obtener imagen.`, "error");
+        }
+      } catch (e) {
+        log(`❌ Escena ${numF}: error en cobertura absoluta: ${e.message}`, "error");
+      }
+    }
+  }
   log(`Proceso completado: ${descargadas}/${escenas.length}`);
+  const totalConImagen = numerosDescargados.size;
+  const modalTitulo = document.getElementById("modal_titulo");
+  const modalMensaje = document.getElementById("modal_mensaje");
+  modalTitulo.textContent = totalConImagen === escenas.length ? "¡Proceso completado!" : "Proceso completado con alertas";
+  modalMensaje.textContent = `Descargadas: ${totalConImagen}/${escenas.length} (${totalConImagen === escenas.length ? "100%" : "cobertura parcial"})`;
+  document.getElementById("modal_completado").style.display = "flex";
   document.getElementById("btn_cancelar").style.display = "none";
   document.getElementById("btn_comenzar").style.display = "inline-block";
-  // Empaquetar en ZIP
-  if (descargadas > 0) await empaquetarEnZip(escenas);
+
   } catch (err) {
     console.error("[btn_comenzar] Error:", err);
     log(`❌ Error crítico en el proceso: ${err.message}`, "error");
@@ -2057,30 +2234,11 @@ puerto.onDisconnect.addListener(() => {
 });
 
 // ============================================================
-// LISTENERS FALTANTES: modal_cerrar, vistas sospechosas
+// LISTENERS FALTANTES: modal_cerrar
 // ============================================================
 
 on("modal_cerrar", "click", () => {
   document.getElementById("modal_completado").style.display = "none";
-});
-
-on("btn_sospechosas", "click", () => {
-  document.getElementById("vista_sospechosas").style.display = "block";
-  document.getElementById("btn_sospechosas").style.display = "none";
-});
-
-on("cerrar_sospechosas", "click", () => {
-  document.getElementById("vista_sospechosas").style.display = "none";
-});
-
-on("sospechosas_usar", "click", () => {
-  log("✅ Imagen sospechosa aceptada y descargada.");
-  document.getElementById("vista_sospechosas").style.display = "none";
-});
-
-on("sospechosas_saltar", "click", () => {
-  log("⏭️ Imagen sospechosa descartada.");
-  document.getElementById("vista_sospechosas").style.display = "none";
 });
 
 console.log("[sidepanel.js] Script cargado correctamente. Listeners registrados.");
