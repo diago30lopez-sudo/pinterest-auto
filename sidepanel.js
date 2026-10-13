@@ -69,18 +69,123 @@ function actualizarProgreso(actual, total) {
   barraRelleno.style.width = porcentaje + "%";
 }
 
-// ---------- Parseo del guion: captura nº de escena y búsqueda ----------
-// Acepta comillas rectas (") o curvas (\u201C \u201D) para mayor robustez.
-const REGEX_ESCENAS = /ESCENA\s*#?(\d+).*?BÚSQUEDA\s+DE\s+IMAGEN.*?:\s*["\u201C\u201D]*\s*(.+?)\s*["\u201C\u201D]/gis;
+// ============================================================
+// PARSER ROBUSTO DE GUIONES
+// Detecta escenas y búsquedas en múltiples formatos:
+//   - ESCENA #36 / ESCENA 36 / **ESCENA #36**
+//   - BÚSQUEDA DE IMAGEN: "..." / BÚSQUEDA DE IMAGEN (Google/Pinterest): "..."
+//   - BUSQUEDA DE IMAGEN: / IMAGE SEARCH: / PROMPT: / BÚSQUEDA: / BUSCAR:
+//   - Cualquier línea con palabras clave + ":" o comillas
+// ============================================================
+// Patrones para detectar el INICIO de una escena (por orden de prioridad).
+const PATRONES_ESCENA = [
+  /\*{0,2}\s*ESCENA\s*#?\s*(\d+)\s*\*{0,2}/i,
+  /\*{0,2}\s*SCENE\s*#?\s*(\d+)\s*\*{0,2}/i,
+  /^\s*#\s*(\d+)\s*$/,
+];
 
+// Patrones para detectar la LÍNEA DE BÚSQUEDA (por orden de prioridad).
+const PATRONES_BUSQUEDA = [
+  // Con dos puntos obligatorios
+  /B[ÚU]SQUEDA\s+DE\s+IMAGEN\s*(?:\([^)]*\))?\s*:\s*(.+)/i,
+  /B[ÚU]SQUEDA\s+DE\s+IMAGEN\s*(?:\([^)]*\))?\s+(.+)/i,
+  /B[ÚU]SQUEDA\s*:\s*(.+)/i,
+  /IMAGE\s+SEARCH\s*:\s*(.+)/i,
+  /IMAGE\s+SEARCH\s+(.+)/i,
+  /PROMPT\s+DE\s+B[ÚU]SQUEDA\s*:\s*(.+)/i,
+  /PROMPT\s*:\s*(.+)/i,
+  /(?:BUSCAR|SEARCH)\s*:\s*(.+)/i,
+];
+
+// Palabras clave que deben aparecer en una línea para considerarla
+// candidata a "búsqueda" en el fallback heurístico.
+const PALABRAS_CLAVE_BUSQUEDA = [
+  "búsqueda", "busqueda", "search", "imagen", "image", "prompt", "query",
+];
+
+// Limpia comillas, corchetes, asteriscos y espacios de un texto.
+function limpiarTextoBusqueda(texto) {
+  if (!texto) return "";
+  let t = String(texto).trim();
+  // Quitar asteriscos de markdown al inicio/final
+  t = t.replace(/^\*+|\*+$/g, "").trim();
+  // Quitar comillas rectas y curvas al inicio/final
+  t = t.replace(/^["'\u201C\u201D\u00AB\u00BB]+/, "");
+  t = t.replace(/["'\u201C\u201D\u00AB\u00BB]+$/, "");
+  // Quitar corchetes/paréntesis al inicio/final
+  t = t.replace(/^[\[\(\{]+/, "");
+  t = t.replace(/[\]\)\}]+$/, "");
+  // Quitar punto final
+  t = t.replace(/[.;]+$/, "");
+  return t.trim();
+}
+
+// Intenta extraer la búsqueda de una línea usando los patrones conocidos.
+function extraerBusquedaDeLinea(linea) {
+  if (!linea) return null;
+  for (const patron of PATRONES_BUSQUEDA) {
+    const m = linea.match(patron);
+    if (m && m[1]) {
+      const limpio = limpiarTextoBusqueda(m[1]);
+      if (limpio.length >= 3) return limpio;
+    }
+  }
+  // FALLBACK HEURÍSTICO: si la línea contiene palabras clave de búsqueda
+  // Y tiene texto después de ":", extraerlo.
+  const lineaMin = linea.toLowerCase();
+  const tieneClave = PALABRAS_CLAVE_BUSQUEDA.some(k => lineaMin.includes(k));
+  if (tieneClave) {
+    const idx = linea.indexOf(":");
+    if (idx >= 0 && idx < linea.length - 1) {
+      const limpio = limpiarTextoBusqueda(linea.slice(idx + 1));
+      if (limpio.length >= 3) return limpio;
+    }
+  }
+  return null;
+}
+
+// Detecta el número de escena en una línea.
+function extraerNumeroEscena(linea) {
+  for (const patron of PATRONES_ESCENA) {
+    const m = linea.match(patron);
+    if (m && m[1]) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
+  return null;
+}
+
+// Parser principal: recorre el guion línea a línea.
 function parsearGuion(guion) {
+  if (!guion || typeof guion !== "string") return [];
+  const lineas = guion.split(/\r?\n/);
   const escenas = [];
-  let coincidencia;
-  while ((coincidencia = REGEX_ESCENAS.exec(guion)) !== null) {
-    escenas.push({
-      numero: parseInt(coincidencia[1], 10),
-      busqueda: coincidencia[2],
-    });
+  let escenaActual = null;
+  for (let i = 0; i < lineas.length; i++) {
+    const linea = lineas[i].trim();
+    if (!linea) continue;
+    // 1. ¿Inicio de escena?
+    const numEscena = extraerNumeroEscena(linea);
+    if (numEscena !== null) {
+      // Guardar la escena anterior si tenía búsqueda
+      if (escenaActual && escenaActual.busqueda) {
+        escenas.push(escenaActual);
+      }
+      escenaActual = { numero: numEscena, busqueda: "" };
+      continue;
+    }
+    // 2. ¿Línea de búsqueda dentro de una escena?
+    if (escenaActual && !escenaActual.busqueda) {
+      const busqueda = extraerBusquedaDeLinea(linea);
+      if (busqueda) {
+        escenaActual.busqueda = busqueda;
+      }
+    }
+  }
+  // Guardar la última escena
+  if (escenaActual && escenaActual.busqueda) {
+    escenas.push(escenaActual);
   }
   return escenas;
 }
@@ -1837,8 +1942,24 @@ on("archivo_guion", "change", async (e) => {
     const escenas = parsearGuion(texto);
     if (escenas.length > 0) {
       log(`📄 Guion cargado: ${escenas.length} escenas detectadas.`);
+      log(`🔍 Primera escena: #${escenas[0].numero} → "${escenas[0].busqueda.slice(0, 60)}..."`);
+      if (escenas.length > 1) {
+        log(`🔍 Segunda escena: #${escenas[1].numero} → "${escenas[1].busqueda.slice(0, 60)}..."`);
+      }
+      // Verificar que no falte ninguna
+      const numerosDetectados = new Set(escenas.map(e => e.numero));
+      const maxNum = Math.max(...numerosDetectados);
+      const faltantes = [];
+      for (let n = 1; n <= maxNum; n++) {
+        if (!numerosDetectados.has(n)) faltantes.push(n);
+      }
+      if (faltantes.length > 0) {
+        log(`⚠️ Faltan las escenas: ${faltantes.join(", ")}. Revisa el formato del guion.`, "warn");
+      }
     } else {
-      log(`⚠️ El archivo no tiene escenas con el formato esperado.`);
+      log(`⚠️ El archivo no tiene escenas con el formato esperado.`, "warn");
+      log(`ℹ️ Formatos soportados: "ESCENA #N", "ESCENA N", "SCENE #N", "**ESCENA #N**"`, "warn");
+      log(`ℹ️ Líneas de búsqueda: "BÚSQUEDA DE IMAGEN:", "BUSQUEDA:", "IMAGE SEARCH:", "PROMPT:"`, "warn");
     }
   } catch (err) {
     console.error("[archivo_guion] Error al cargar archivo:", err);
